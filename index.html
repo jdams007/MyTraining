@@ -999,8 +999,43 @@ function renderKB(q){
   });
 }
 
+// ── HANDLE AUTH REDIRECT (GitHub Pages) ────────────
+async function handleAuthRedirect(){
+  const hash = window.location.hash;
+  if(hash && (hash.includes('access_token') || hash.includes('error'))){
+    const params = new URLSearchParams(hash.substring(1));
+    const access_token = params.get('access_token');
+    const refresh_token = params.get('refresh_token');
+    if(access_token && refresh_token){
+      await sb.auth.setSession({access_token, refresh_token});
+      window.history.replaceState(null, '', window.location.pathname);
+      return true;
+    }
+  }
+  return false;
+}
+
 // ── START ───────────────────────────────────────────
-init();
+async function start(){
+  showLoading();
+  await handleAuthRedirect();
+  const {data:{session}} = await sb.auth.getSession();
+  if(session){
+    currentUser = session.user;
+    await loadUserData();
+  } else {
+    hideLoading();
+    document.getElementById('auth-screen').style.display='flex';
+  }
+  sb.auth.onAuthStateChange(async(event,session)=>{
+    if(event==='SIGNED_IN' && session && !currentUser){
+      currentUser = session.user;
+      showLoading();
+      await loadUserData();
+    }
+  });
+}
+start();
 </script>
 </body>
 </html>
