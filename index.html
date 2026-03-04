@@ -191,23 +191,29 @@
 <!-- AUTH SCREEN -->
 <div id="auth-screen" style="display:none">
   <div class="auth-logo">FAMILIE DAMS · TRAINING</div>
-  <div id="auth-form">
-    <div class="auth-title">Willkommen</div>
-    <div class="auth-sub">Gib deine E-Mail-Adresse ein.<br>Du bekommst einen Login-Link.</div>
-    <input class="auth-input" id="auth-email" type="email" placeholder="deine@email.de" autocomplete="email"/>
-    <button class="auth-btn" id="auth-send">Login-Link senden</button>
-    <div id="auth-status"></div>
-  </div>
+  <div class="auth-title">Willkommen</div>
+  <div class="auth-sub">Gib deine E-Mail-Adresse ein.<br>Du bekommst einen Login-Link.<br><span style="color:#47e8a0;font-size:11px;">Nach dem ersten Login bleibst du 30 Tage eingeloggt.</span></div>
+  <input class="auth-input" id="auth-email" type="email" placeholder="deine@email.de" autocomplete="email"/>
+  <button class="auth-btn" id="auth-send">Login-Link senden</button>
+  <div id="auth-status"></div>
 </div>
 
 <!-- SETUP SCREEN (new user) -->
 <div id="setup-screen">
-  <div class="setup-title">Dein Profil</div>
-  <div class="setup-sub">Wie sollen wir dich nennen?</div>
-  <input class="auth-input" id="setup-name" placeholder="Dein Name" maxlength="20" style="margin-bottom:20px;"/>
-  <div style="font-size:10px;color:#444;letter-spacing:3px;margin-bottom:12px;align-self:flex-start;">DEINE FARBE</div>
-  <div class="color-row" id="setup-colors"></div>
-  <button class="auth-btn" id="setup-save">Loslegen</button>
+  <div id="setup-step1">
+    <div class="setup-title">Dein Profil</div>
+    <div class="setup-sub">Wie sollen wir dich nennen?</div>
+    <input class="auth-input" id="setup-name" placeholder="Dein Name" maxlength="20" style="margin-bottom:20px;"/>
+    <div style="font-size:10px;color:#444;letter-spacing:3px;margin-bottom:12px;align-self:flex-start;">DEINE FARBE</div>
+    <div class="color-row" id="setup-colors"></div>
+    <button class="auth-btn" id="setup-next">Weiter</button>
+  </div>
+  <div id="setup-step2" style="display:none;width:100%;">
+    <div class="setup-title">Startprogramm</div>
+    <div class="setup-sub">Wähle eine Vorlage oder starte leer.</div>
+    <div id="template-grid" style="display:flex;flex-direction:column;gap:10px;width:100%;margin-bottom:20px;"></div>
+    <button class="auth-btn" id="setup-save">Loslegen</button>
+  </div>
   <div id="setup-status"></div>
 </div>
 
@@ -317,7 +323,15 @@
 <script>
 const SUPABASE_URL = 'https://wagcacdpcsjhcbmfzgpq.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndhZ2NhY2RwY3NqaGNibWZ6Z3BxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI1Njk5MjUsImV4cCI6MjA4ODE0NTkyNX0.E9Eq3V8hUmgIx9aHukSMjqy2N5gEGfcbah7XzItwPBI';
-const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: {
+    persistSession: true,
+    storageKey: 'training-app-session',
+    storage: window.localStorage,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+  }
+});
 
 const PALETTE = ['#e8c547','#e87c47','#e84747','#e847a0','#a047e8','#47a0e8','#47e8c5','#47e8a0'];
 
@@ -347,8 +361,9 @@ let currentUser = null;
 let myProfile = null;
 let myPrograms = []; // [{id, day_key, label, full_label, color, sort_order, exercises:[]}]
 let myLogs = {}; // {exercise_id: {date: [{set_index, kg, reps, time_sec, note}]}}
-let myGroup = null;
-let groupMembers = [];
+let myGroups = []; // all groups user belongs to
+let myGroupMembers = {}; // {group_id: [profiles]}
+let activeGroupId = null; // currently viewed group
 let selectedExId = null;
 let kbCallback = null;
 let currentDay = null; // program id
@@ -392,11 +407,144 @@ document.getElementById('auth-send').addEventListener('click', async()=>{
   btn.disabled=false;btn.textContent='Login-Link senden';
   const status=document.getElementById('auth-status');
   if(error){status.className='auth-err';status.textContent='Fehler: '+error.message;}
-  else{status.className='auth-msg';status.textContent=`✓ Link an ${email} gesendet.\nBitte E-Mail öffnen und auf den Link tippen.`;}
+  else{status.className='auth-msg';status.textContent=`✓ Link an ${email} gesendet. Bitte E-Mail öffnen.`;}
 });
+
+// ── STARTER TEMPLATES ──────────────────────────────
+const STARTER_TEMPLATES = {
+  jan: {
+    label: "Jan – Calisthenics & Kraft",
+    color: "#e8c547",
+    days: [
+      {day_key:"monday",label:"Mo – Pull",full_label:"Montag · Pull · Calisthenics",color:"#e8c547",sort_order:0,exercises:[
+        {name:"Front Lever Holds (Ringe)",sets:5,type:"time",sort_order:0},
+        {name:"Tuck FL Pullups (Ringe)",sets:4,type:"reps",sort_order:1},
+        {name:"Negative Muscle-ups",sets:4,type:"reps",sort_order:2},
+        {name:"Muscle-ups (Schwung)",sets:4,type:"reps",sort_order:3},
+        {name:"Chest to Bar Pull-ups",sets:5,type:"reps",sort_order:4},
+        {name:"Weighted Pull-ups",sets:5,type:"weighted",sort_order:5},
+        {name:"Pull-ups",sets:3,type:"reps",sort_order:6},
+      ]},
+      {day_key:"tuesday",label:"Di – Kraft",full_label:"Dienstag · Kraft",color:"#e87c47",sort_order:1,exercises:[
+        {name:"Kettlebell Swings",sets:10,type:"weighted",sort_order:0},
+        {name:"Squats (Langhantel)",sets:5,type:"weighted",sort_order:1},
+        {name:"Deadlifts (Langhantel)",sets:4,type:"weighted",sort_order:2},
+        {name:"Shoulder Press (LH)",sets:4,type:"weighted",sort_order:3},
+        {name:"Hip Thrusts",sets:3,type:"weighted",sort_order:4},
+        {name:"High Rows",sets:5,type:"weighted",sort_order:5},
+        {name:"Bench Press (LH)",sets:5,type:"weighted",sort_order:6},
+        {name:"Bizeps Curls",sets:5,type:"weighted",sort_order:7},
+      ]},
+      {day_key:"wednesday",label:"Mi – Push",full_label:"Mittwoch · Push · Calisthenics",color:"#47e8c5",sort_order:2,exercises:[
+        {name:"Wall HS Scapula Pushups",sets:3,type:"reps",sort_order:0},
+        {name:"Freier Handstand",sets:5,type:"time",sort_order:1},
+        {name:"Ring Dream Machine Planche",sets:5,type:"time",sort_order:2},
+        {name:"Ring Pushups",sets:4,type:"reps",sort_order:3},
+        {name:"Dips (Ringe)",sets:4,type:"reps",sort_order:4},
+        {name:"Handstand Pushups",sets:4,type:"reps",sort_order:5},
+        {name:"Pike Pushups",sets:3,type:"reps",sort_order:6},
+      ]},
+      {day_key:"thursday",label:"Do – Kraft",full_label:"Donnerstag · Kraft",color:"#a047e8",sort_order:3,exercises:[
+        {name:"Kettlebell Swings",sets:10,type:"weighted",sort_order:0},
+        {name:"Squats (Langhantel)",sets:5,type:"weighted",sort_order:1},
+        {name:"Romanian Deadlifts",sets:4,type:"weighted",sort_order:2},
+        {name:"Lunges",sets:3,type:"weighted",sort_order:3},
+        {name:"Leg Curl (Maschine)",sets:4,type:"weighted",sort_order:4},
+        {name:"Calf Raises",sets:4,type:"weighted",sort_order:5},
+        {name:"Ab Wheel",sets:3,type:"reps",sort_order:6},
+        {name:"Hanging Leg Raises",sets:3,type:"reps",sort_order:7},
+      ]},
+      {day_key:"friday",label:"Fr – Pull",full_label:"Freitag · Pull · Calisthenics",color:"#47a0e8",sort_order:4,exercises:[
+        {name:"Front Lever Holds (Ringe)",sets:5,type:"time",sort_order:0},
+        {name:"Tuck FL Rows",sets:4,type:"reps",sort_order:1},
+        {name:"Archer Pull-ups",sets:4,type:"reps",sort_order:2},
+        {name:"L-Sit Pull-ups",sets:4,type:"reps",sort_order:3},
+        {name:"Ring Rows",sets:4,type:"reps",sort_order:4},
+        {name:"Weighted Pull-ups",sets:5,type:"weighted",sort_order:5},
+        {name:"Pull-ups",sets:3,type:"reps",sort_order:6},
+      ]},
+    ]
+  },
+  heike: {
+    label: "Heike – Ganzkörper 3x",
+    color: "#e847a0",
+    days: [
+      {day_key:"tag1",label:"Tag 1",full_label:"Tag 1 · Ganzkörper",color:"#e847a0",sort_order:0,exercises:[
+        {name:"Beine glutedominant",sets:2,type:"weighted",sort_order:0},
+        {name:"Beine rectus femoris",sets:2,type:"weighted",sort_order:1},
+        {name:"Beine hintere Kette",sets:2,type:"weighted",sort_order:2},
+        {name:"Pull horizontal 1",sets:3,type:"weighted",sort_order:3},
+        {name:"Push horizontal 2",sets:2,type:"weighted",sort_order:4},
+        {name:"Schulter seitlich isoliert",sets:2,type:"weighted",sort_order:5},
+      ]},
+      {day_key:"tag2",label:"Tag 2",full_label:"Tag 2 · Ganzkörper",color:"#c447e8",sort_order:1,exercises:[
+        {name:"Beine Glutes isoliert",sets:3,type:"weighted",sort_order:0},
+        {name:"Beine quaddominant",sets:2,type:"weighted",sort_order:1},
+        {name:"Beinbeuger",sets:2,type:"weighted",sort_order:2},
+        {name:"Pull vertikal 2",sets:2,type:"weighted",sort_order:3},
+        {name:"Push vertikal",sets:2,type:"weighted",sort_order:4},
+        {name:"Schulter hinten isoliert",sets:2,type:"weighted",sort_order:5},
+      ]},
+      {day_key:"tag3",label:"Tag 3",full_label:"Tag 3 · Ganzkörper",color:"#47c8e8",sort_order:2,exercises:[
+        {name:"Beine Glutes isoliert",sets:2,type:"weighted",sort_order:0},
+        {name:"Beine rectus femoris",sets:2,type:"weighted",sort_order:1},
+        {name:"Beinbeuger",sets:2,type:"weighted",sort_order:2},
+        {name:"Push horizontal 1",sets:3,type:"weighted",sort_order:3},
+        {name:"Pull horizontal 2",sets:2,type:"weighted",sort_order:4},
+        {name:"Push vertikal",sets:2,type:"weighted",sort_order:5},
+      ]},
+    ]
+  },
+  hannes: {
+    label: "Hannes – Split 5x",
+    color: "#47e8a0",
+    days: [
+      {day_key:"pull",label:"Pull",full_label:"Pull · Rücken & Bizeps",color:"#47e8a0",sort_order:0,exercises:[
+        {name:"Lat-Zug",sets:4,type:"weighted",sort_order:0},
+        {name:"Rows",sets:4,type:"weighted",sort_order:1},
+        {name:"Klimmzüge",sets:3,type:"reps",sort_order:2},
+      ]},
+      {day_key:"push",label:"Push",full_label:"Push · Brust & Schulter",color:"#e87c47",sort_order:1,exercises:[
+        {name:"Bankdrücken",sets:4,type:"weighted",sort_order:0},
+        {name:"Brustpresse",sets:4,type:"weighted",sort_order:1},
+        {name:"Liegestütze",sets:3,type:"reps",sort_order:2},
+      ]},
+      {day_key:"beine",label:"Beine",full_label:"Beine",color:"#a047e8",sort_order:2,exercises:[
+        {name:"Squats",sets:4,type:"weighted",sort_order:0},
+        {name:"Leg Extensions",sets:3,type:"weighted",sort_order:1},
+        {name:"Leg Curls",sets:3,type:"weighted",sort_order:2},
+        {name:"Leg Press",sets:3,type:"weighted",sort_order:3},
+      ]},
+      {day_key:"bauch",label:"Bauch",full_label:"Bauch · Core",color:"#e8c547",sort_order:3,exercises:[
+        {name:"Situps",sets:3,type:"reps",sort_order:0},
+      ]},
+      {day_key:"arme",label:"Arme",full_label:"Arme · Bizeps & Trizeps",color:"#47a0e8",sort_order:4,exercises:[
+        {name:"Bizeps Curls",sets:4,type:"weighted",sort_order:0},
+        {name:"Trizeps Extensions",sets:4,type:"weighted",sort_order:1},
+      ]},
+    ]
+  },
+};
+
+async function applyTemplate(templateKey, userId){
+  const tmpl = STARTER_TEMPLATES[templateKey];
+  if(!tmpl) return;
+  for(const day of tmpl.days){
+    const {data:prog} = await sb.from('programs').insert({
+      user_id: userId, day_key: day.day_key, label: day.label,
+      full_label: day.full_label, color: day.color, sort_order: day.sort_order
+    }).select().single();
+    if(!prog) continue;
+    for(const ex of day.exercises){
+      await sb.from('exercises').insert({program_id: prog.id, ...ex});
+    }
+  }
+}
 
 // ── SETUP ──────────────────────────────────────────
 const PALETTE_COLORS=PALETTE;
+let selectedTemplate = 'hannes'; // default
+
 function renderSetupColors(selected){
   const box=document.getElementById('setup-colors');box.innerHTML='';
   PALETTE_COLORS.forEach(c=>{
@@ -408,6 +556,33 @@ function renderSetupColors(selected){
 }
 renderSetupColors(PALETTE_COLORS[0]);
 
+document.getElementById('setup-next').addEventListener('click',()=>{
+  const name=document.getElementById('setup-name').value.trim();
+  if(!name){showToast('❌ Bitte Namen eingeben');return;}
+  document.getElementById('setup-step1').style.display='none';
+  document.getElementById('setup-step2').style.display='flex';
+  document.getElementById('setup-step2').style.flexDirection='column';
+  document.getElementById('setup-step2').style.alignItems='center';
+  renderTemplateGrid();
+});
+
+function renderTemplateGrid(){
+  const grid=document.getElementById('template-grid');grid.innerHTML='';
+  const templates=[
+    {key:'jan', label:'Jan – Calisthenics & Kraft', sub:'5 Tage Mo–Fr', color:'#e8c547'},
+    {key:'heike', label:'Heike – Ganzkörper', sub:'3 Tage', color:'#e847a0'},
+    {key:'hannes', label:'Hannes – Split', sub:'5 Blöcke Pull/Push/Beine/Bauch/Arme', color:'#47e8a0'},
+    {key:'empty', label:'Leeres Programm', sub:'Selbst aufbauen', color:'#444'},
+  ];
+  templates.forEach(t=>{
+    const card=document.createElement('div');
+    card.style.cssText=`background:#111;border:2px solid ${selectedTemplate===t.key?t.color:'#1a1a1a'};border-radius:10px;padding:14px 16px;cursor:pointer;display:flex;align-items:center;gap:12px;`;
+    card.innerHTML=`<div style="width:12px;height:12px;border-radius:50%;background:${t.color};flex-shrink:0;"></div><div><div style="font-size:14px;font-weight:600;color:#ddd;">${t.label}</div><div style="font-size:11px;color:#444;margin-top:2px;">${t.sub}</div></div>`;
+    card.addEventListener('click',()=>{selectedTemplate=t.key;renderTemplateGrid();});
+    grid.appendChild(card);
+  });
+}
+
 document.getElementById('setup-save').addEventListener('click', async()=>{
   const name=document.getElementById('setup-name').value.trim();
   if(!name){showToast('❌ Bitte Namen eingeben');return;}
@@ -416,8 +591,11 @@ document.getElementById('setup-save').addEventListener('click', async()=>{
   const {error}=await sb.from('profiles').insert({id:currentUser.id,name,color});
   if(error){hideLoading();showToast('❌ '+error.message);return;}
   myProfile={id:currentUser.id,name,color};
+  if(selectedTemplate && selectedTemplate !== 'empty'){
+    await applyTemplate(selectedTemplate, currentUser.id);
+  }
   hideLoading();
-  showApp();
+  await loadUserData();
 });
 
 // ── INIT ───────────────────────────────────────────
@@ -472,12 +650,15 @@ async function loadTodayLogs(){
 
 async function loadGroup(){
   const {data:memberships}=await sb.from('group_members').select('group_id').eq('user_id',currentUser.id);
-  if(!memberships?.length){myGroup=null;groupMembers=[];return;}
-  const gid=memberships[0].group_id;
-  const {data:group}=await sb.from('groups').select('*').eq('id',gid).single();
-  myGroup=group;
-  const {data:members}=await sb.from('group_members').select('user_id, profiles(id,name,color)').eq('group_id',gid);
-  groupMembers=(members||[]).map(m=>m.profiles).filter(Boolean);
+  if(!memberships?.length){myGroups=[];myGroupMembers={};activeGroupId=null;return;}
+  const gids=memberships.map(m=>m.group_id);
+  const {data:groups}=await sb.from('groups').select('*').in('id',gids);
+  myGroups=groups||[];
+  if(!activeGroupId && myGroups.length) activeGroupId=myGroups[0].id;
+  for(const g of myGroups){
+    const {data:members}=await sb.from('group_members').select('user_id, profiles(id,name,color)').eq('group_id',g.id);
+    myGroupMembers[g.id]=(members||[]).map(m=>m.profiles).filter(Boolean);
+  }
 }
 
 function showApp(){
@@ -490,9 +671,9 @@ function showApp(){
   av.style.background=myProfile.color+'22';av.style.color=myProfile.color;
   document.getElementById('header-name').textContent=myProfile.name.toUpperCase();
   document.getElementById('header-name').style.color=myProfile.color;
-  if(myGroup){
+  if(myGroups.length){
     const gi=document.getElementById('group-indicator');
-    gi.style.display='block';gi.textContent=myGroup.name;
+    gi.style.display='block';gi.textContent=myGroups.length===1?myGroups[0].name:`${myGroups.length} Gruppen`;
   }
   showTab('home');
 }
@@ -502,7 +683,7 @@ document.getElementById('logout-btn').addEventListener('click',()=>{
     {label:'Abbrechen',cls:'cancel'},
     {label:'Logout',cls:'confirm',action:async()=>{
       await sb.auth.signOut();
-      currentUser=null;myProfile=null;myPrograms=[];myLogs={};myGroup=null;groupMembers=[];
+      currentUser=null;myProfile=null;myPrograms=[];myLogs={};myGroups=[];myGroupMembers={};activeGroupId=null;
       document.getElementById('main-app').style.display='none';
       document.getElementById('auth-screen').style.display='flex';
     }}
@@ -673,7 +854,7 @@ async function renderStats(){
   });
   if(selectedExId){
     const ex=exsWithData.find(e=>e.id===selectedExId);if(ex)await showMyChart(ex);
-    if(myGroup)await showCompareChart(selectedExId);
+    if(myGroups.length)await showCompareChart(selectedExId);
   }
 }
 
@@ -722,7 +903,10 @@ function drawChart(canvasId,cd,color){
 }
 
 async function showCompareChart(exId){
-  const memberIds=groupMembers.map(m=>m.id);
+  // Collect all unique members across all groups
+  const allMembers=[];
+  Object.values(myGroupMembers).forEach(members=>members.forEach(m=>{if(!allMembers.find(x=>x.id===m.id))allMembers.push(m);}));
+  const memberIds=allMembers.map(m=>m.id);
   if(memberIds.length<2)return;
   const {data:logs}=await sb.from('training_logs').select('user_id,kg,reps,time_sec,exercise_id').eq('exercise_id',exId).in('user_id',memberIds);
   if(!logs?.length)return;
@@ -734,7 +918,8 @@ async function showCompareChart(exId){
     byUser[l.user_id].push(l);
   });
   const maxByUser=Object.entries(byUser).map(([uid,sets])=>{
-    const member=groupMembers.find(m=>m.id===uid);
+    const allMbrs=Object.values(myGroupMembers).flat();
+    const member=allMbrs.find(m=>m.id===uid);
     let v;
     if(ex.type==='weighted')v=Math.max(...sets.map(s=>parseFloat(s.kg)||0));
     else if(ex.type==='reps')v=Math.max(...sets.map(s=>parseInt(s.reps)||0));
@@ -756,65 +941,74 @@ async function showCompareChart(exId){
 // ── GROUP ──────────────────────────────────────────
 async function renderGroup(){
   const c=document.getElementById('group-content');c.innerHTML='';
-  if(!myGroup){
-    // No group yet
-    c.innerHTML=`
-      <div class="section-label">GRUPPE</div>
-      <div class="empty-msg" style="padding:30px 0 24px;">Du bist noch in keiner Gruppe.</div>
-      <button class="action-btn green" id="create-group-btn"><span>＋ Gruppe erstellen</span><span class="arrow">›</span></button>
-      <button class="action-btn" id="join-group-btn"><span>🔗 Gruppe beitreten</span><span class="arrow">›</span></button>`;
-    document.getElementById('create-group-btn').addEventListener('click',createGroup);
-    document.getElementById('join-group-btn').addEventListener('click',joinGroup);
+
+  // Top actions always visible
+  const topBtns=document.createElement('div');
+  topBtns.innerHTML=`
+    <button class="action-btn green" id="create-group-btn"><span>＋ Neue Gruppe erstellen</span><span class="arrow">›</span></button>
+    <button class="action-btn" id="join-group-btn"><span>🔗 Gruppe beitreten</span><span class="arrow">›</span></button>`;
+  c.appendChild(topBtns);
+  document.getElementById('create-group-btn').addEventListener('click',createGroup);
+  document.getElementById('join-group-btn').addEventListener('click',joinGroup);
+
+  if(!myGroups.length){
+    const empty=document.createElement('div');
+    empty.className='empty-msg';empty.style.padding='30px 0';
+    empty.textContent='Du bist noch in keiner Gruppe.';
+    c.appendChild(empty);
     return;
   }
-  const isOwner=myGroup.owner_id===currentUser.id;
-  // Invite code box
-  c.innerHTML=`
-    <div class="section-label">MEINE GRUPPE</div>
-    <div class="group-card">
-      <div class="group-name">${myGroup.name}</div>
-      <div class="group-sub">${groupMembers.length} Mitglieder</div>
-    </div>
-    <div class="invite-box">
-      <div style="font-size:10px;color:#444;letter-spacing:3px;margin-bottom:4px;">EINLADUNGSCODE</div>
-      <div class="invite-code">${myGroup.invite_code}</div>
-      <div class="invite-sub">Weitergeben – damit können andere beitreten</div>
-      <button class="action-btn green" id="copy-invite" style="margin-top:12px;"><span>📋 Code kopieren</span></button>
-    </div>
-    <div class="section-label" style="margin-top:8px;">MITGLIEDER</div>
-    <div id="member-list"></div>
-    ${isOwner?'<button class="action-btn danger" id="delete-group-btn" style="margin-top:8px;"><span>🗑 Gruppe löschen</span><span class="arrow">›</span></button>':'<button class="action-btn danger" id="leave-group-btn" style="margin-top:8px;"><span>Gruppe verlassen</span><span class="arrow">›</span></button>'}
-  `;
-  document.getElementById('copy-invite').addEventListener('click',()=>{
-    navigator.clipboard?.writeText(myGroup.invite_code).then(()=>showToast('✓ Code kopiert'));
-  });
-  const ml=document.getElementById('member-list');
-  groupMembers.forEach(m=>{
-    const row=document.createElement('div');row.className='member-row';
-    row.innerHTML=`<div class="member-avatar" style="background:${m.color}22;color:${m.color}">${m.name[0].toUpperCase()}</div><div class="member-name">${m.name}${m.id===currentUser.id?' (du)':''}</div>`;
-    ml.appendChild(row);
-  });
-  if(isOwner){
-    document.getElementById('delete-group-btn').addEventListener('click',()=>{
-      showModal({title:'Gruppe löschen',msg:`"${myGroup.name}" und alle Mitgliedschaften löschen?`,buttons:[
-        {label:'Abbrechen',cls:'cancel'},
-        {label:'Löschen',cls:'confirm',action:async()=>{
-          await sb.from('groups').delete().eq('id',myGroup.id);
-          myGroup=null;groupMembers=[];await renderGroup();
-        }}
-      ]});
+
+  // Render each group
+  myGroups.forEach(group=>{
+    const members=myGroupMembers[group.id]||[];
+    const isOwner=group.owner_id===currentUser.id;
+    const section=document.createElement('div');section.style.marginTop='20px';
+    section.innerHTML=`
+      <div class="section-label">${group.name.toUpperCase()}</div>
+      <div class="invite-box">
+        <div style="font-size:10px;color:#444;letter-spacing:3px;margin-bottom:4px;">EINLADUNGSCODE</div>
+        <div class="invite-code">${group.invite_code}</div>
+        <div class="invite-sub">Weitergeben – damit können andere beitreten</div>
+        <button class="action-btn green copy-invite-btn" data-code="${group.invite_code}" style="margin-top:12px;"><span>📋 Code kopieren</span></button>
+      </div>
+      <div style="font-size:10px;color:#444;letter-spacing:3px;margin:12px 0 8px;">MITGLIEDER (${members.length})</div>
+      <div class="member-list-${group.id}"></div>
+      ${isOwner
+        ?`<button class="action-btn danger del-group-btn" data-gid="${group.id}" data-gname="${group.name}" style="margin-top:8px;"><span>🗑 Gruppe löschen</span><span class="arrow">›</span></button>`
+        :`<button class="action-btn danger leave-group-btn" data-gid="${group.id}" style="margin-top:8px;"><span>Gruppe verlassen</span><span class="arrow">›</span></button>`
+      }`;
+    c.appendChild(section);
+    const ml=section.querySelector(`.member-list-${group.id}`);
+    members.forEach(m=>{
+      const row=document.createElement('div');row.className='member-row';
+      row.innerHTML=`<div class="member-avatar" style="background:${m.color}22;color:${m.color}">${m.name[0].toUpperCase()}</div><div class="member-name">${m.name}${m.id===currentUser.id?' (du)':''}</div>`;
+      ml.appendChild(row);
     });
-  } else {
-    document.getElementById('leave-group-btn').addEventListener('click',()=>{
-      showModal({title:'Gruppe verlassen',msg:'Wirklich verlassen?',buttons:[
-        {label:'Abbrechen',cls:'cancel'},
-        {label:'Verlassen',cls:'confirm',action:async()=>{
-          await sb.from('group_members').delete().eq('group_id',myGroup.id).eq('user_id',currentUser.id);
-          myGroup=null;groupMembers=[];await renderGroup();
-        }}
-      ]});
-    });
-  }
+  });
+
+  // Event delegation for dynamic buttons
+  c.querySelectorAll('.copy-invite-btn').forEach(btn=>btn.addEventListener('click',()=>{
+    navigator.clipboard?.writeText(btn.dataset.code).then(()=>showToast('✓ Code kopiert'));
+  }));
+  c.querySelectorAll('.del-group-btn').forEach(btn=>btn.addEventListener('click',()=>{
+    showModal({title:'Gruppe löschen',msg:`"${btn.dataset.gname}" löschen?`,buttons:[
+      {label:'Abbrechen',cls:'cancel'},
+      {label:'Löschen',cls:'confirm',action:async()=>{
+        await sb.from('groups').delete().eq('id',btn.dataset.gid);
+        await loadGroup();renderGroup();
+      }}
+    ]});
+  }));
+  c.querySelectorAll('.leave-group-btn').forEach(btn=>btn.addEventListener('click',()=>{
+    showModal({title:'Gruppe verlassen',msg:'Wirklich verlassen?',buttons:[
+      {label:'Abbrechen',cls:'cancel'},
+      {label:'Verlassen',cls:'confirm',action:async()=>{
+        await sb.from('group_members').delete().eq('group_id',btn.dataset.gid).eq('user_id',currentUser.id);
+        await loadGroup();renderGroup();
+      }}
+    ]});
+  }));
 }
 
 async function createGroup(){
@@ -826,7 +1020,6 @@ async function createGroup(){
       const {data,error}=await sb.from('groups').insert({name:name.trim(),owner_id:currentUser.id}).select().single();
       if(error){hideLoading();showToast('❌ '+error.message);return;}
       await sb.from('group_members').insert({group_id:data.id,user_id:currentUser.id});
-      myGroup=data;
       await loadGroup();
       hideLoading();
       renderGroup();
